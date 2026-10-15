@@ -1,0 +1,248 @@
+# Experiment 8 — Personal Knowledge Base using Retrieval-Augmented Generation (RAG)
+
+**Build a Personal RAG-Based Question Answering System**
+
+A Retrieval-Augmented Generation (RAG) system that builds a searchable knowledge
+base from a student's own personal documents (resume, transcript, certificates,
+project reports, internship certificate, SOP, achievements) and answers natural-
+language questions **using only those documents**. If the answer is not in the
+knowledge base, the system says so instead of guessing.
+
+---
+
+## Objective
+
+Design and implement a Personal RAG Question Answering System that retrieves
+information from an individual's personal document collection using **embeddings**,
+a **vector database**, and a **Large Language Model**.
+
+---
+
+## Tech stack
+
+| Layer | Choice | Why |
+|---|---|---|
+| **Language** | Python 3.13 | Standard for RAG / ML tooling |
+| **Framework** | **LangChain** (`langchain`, `langchain-community`, `langchain-text-splitters`, `langchain-chroma`, + a provider integration) | Orchestrates loading → splitting → embedding → retrieval → generation |
+| **Document parsing** | `pypdf` (PDF), `python-docx` (DOCX), built-in reader (TXT/MD) | Extract text from the four required formats |
+| **Text splitting** | `RecursiveCharacterTextSplitter` | Splits documents into overlapping, retrievable chunks |
+| **Embeddings** | **all-MiniLM-L6-v2** (384-dim), run as a bundled **ONNX** model on CPU | Fast sentence embeddings with **no GPU / PyTorch / download** required |
+| **Vector database** | **Chroma** (persistent, cosine distance) | Stores and similarity-searches the chunk vectors |
+| **Retrieval** | Hybrid: dense (vector similarity) **+** sparse (keyword) | Catches both semantic and exact-term matches |
+| **LLM (answer generation)** | **Pluggable** via `LLM_PROVIDER`: Ollama (free, local) · Groq · Google Gemini · Claude | Writes a concise answer grounded in the retrieved chunks |
+| **Offline fallback** | Built-in extractive responder | Runs the full pipeline **without any API key or network** for reproducibility/grading |
+
+> **Pluggable generation.** The answer generator is chosen with the
+> `LLM_PROVIDER` env var — **Ollama** (100% free, local, no key), **Groq** or
+> **Google Gemini** (free API tiers), or **Claude**. With nothing configured the
+> system uses a built-in **extractive** responder that returns the most relevant
+> sentences from the retrieved chunks, so the pipeline is always runnable
+> end-to-end. Whichever generator is active, retrieval and the "information
+> unavailable" guardrail are identical. (The screenshots below were captured in
+> offline mode; see *Choosing the answer generator* below to use a free LLM.)
+
+---
+
+## Architecture
+
+```
+                         ┌─────────────────────────────────────────┐
+   Student Knowledge     │  INGESTION  (run once: python ingest.py) │
+   Base/                 │                                          │
+   ├─ resume.md          │  1. Load   PDF / DOCX / TXT / MD         │
+   ├─ academic_…pdf      │  2. Split  RecursiveCharacterTextSplitter│
+   ├─ internship_…docx   │  3. Embed  all-MiniLM-L6-v2 (ONNX, 384d) │
+   ├─ certifications.txt │  4. Store  Chroma (persistent, cosine)   │
+   ├─ …                  │                                          │
+   └─ statement_…docx    └───────────────────────┬─────────────────┘
+                                                 │  vectors
+                                                 ▼
+   User question ─► embed ─► ┌────────────────────────────────┐
+                             │  RETRIEVAL                      │
+                             │  hybrid: vector + keyword, top-k│
+                             └───────────────┬────────────────┘
+                                             │ relevant chunks (context)
+                                             ▼
+                             ┌────────────────────────────────┐
+                             │  GENERATION (grounded)          │
+                             │  Claude LLM  ── or ──  offline  │
+                             │  "answer only from context,     │
+                             │   else say it's unavailable"    │
+                             └───────────────┬────────────────┘
+                                             ▼
+                                    Grounded answer + sources
+```
+
+---
+
+## The Student Knowledge Base
+
+The folder [`Student Knowledge Base/`](./Student%20Knowledge%20Base) contains the
+personal documents, deliberately spread across **all four required formats**:
+
+| Document | Format | Contents |
+|---|---|---|
+| `resume.md` | Markdown | Contact, education, skills, projects, experience |
+| `project_report.md` | Markdown | Project report (Multi-Business Accounting Automation) |
+| `achievements_and_awards.md` | Markdown | Key achievements & highlights |
+| `certifications.txt` | Plain text | Certificates and online courses |
+| `academic_transcript.pdf` | PDF | University, programme, GPA, coursework |
+| `internship_certificate.docx` | Word | Internship experience (CostumePeti) |
+| `statement_of_purpose.docx` | Word | SOP with interests + contact |
+
+> **Note on the data.** The documents are built from Anson Dias's real
+> resume/portfolio (name, contact, education, skills, projects, internship,
+> certifications). The academic record and internship documents are the
+> student's own honest records — plain summaries with no forged official seals
+> or signatures. Regenerate them any time with `build_knowledge_base.py`.
+
+---
+
+## How to run
+
+### Recommended: with a free local LLM (Ollama)
+
+**Ollama** runs a real LLM on your own computer — 100% free, no API key, no
+sign-up. This is the recommended way to get proper LLM-generated answers.
+
+```bash
+pip install -r requirements.txt           # installs langchain-ollama by default
+
+# Install Ollama once (free): https://ollama.com/download
+./run_with_ollama.sh                       # pulls llama3.2, ingests, and answers
+# or a single question:
+./run_with_ollama.sh "What is the student's CGPA?"
+```
+
+`run_with_ollama.sh` starts the Ollama server, pulls the model, builds the
+vector store and runs the app with `LLM_PROVIDER=ollama`. When an Ollama server
+is running, `python app.py` **auto-detects and uses it** — no env var needed.
+Change the model with `LLM_MODEL` (e.g. `LLM_MODEL=qwen2.5:3b`).
+
+### Plain run (no LLM needed)
+
+```bash
+pip install -r requirements.txt
+python build_knowledge_base.py   # (re)generate the documents from the resume  [optional]
+python ingest.py                 # load → split → embed → store
+python app.py                    # sample question set
+python app.py "What is the student's CGPA?"   # single question
+python app.py --interactive                   # interactive
+```
+
+With no LLM configured this uses the built-in **offline extractive responder**
+(no network, no API key), so the pipeline always runs end-to-end.
+
+### Other generators (pluggable)
+
+Set `LLM_PROVIDER` to use a different backend (all free or free-tier):
+
+```bash
+export LLM_PROVIDER=groq   GROQ_API_KEY=gsk_...   # console.groq.com
+export LLM_PROVIDER=gemini GOOGLE_API_KEY=...      # aistudio.google.com
+export LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-...   # console.anthropic.com
+```
+
+Install only the integration you want (e.g. `pip install langchain-groq`).
+Whichever generator is active, retrieval and the "answer-only-from-documents"
+guardrail are identical.
+
+---
+
+## Walkthrough with screenshots
+
+> The screenshots below were captured with the **offline extractive responder**
+> (the environment they were produced in could not reach an LLM). Running
+> `./run_with_ollama.sh` on a machine with Ollama produces the same steps with
+> concise, LLM-written answers — the retrieval, sources and guardrail are
+> identical; only the wording of each answer changes.
+
+### Step 1 — Generate the knowledge-base documents
+`build_knowledge_base.py` writes the seven personal documents across PDF, DOCX,
+TXT and Markdown.
+
+![Generate documents](./screenshots/01_generate_documents.png)
+
+### Step 2 — The personal documents
+The `Student Knowledge Base/` folder, showing the four formats.
+
+![Knowledge base files](./screenshots/02_knowledge_base_files.png)
+
+### Step 3 — Ingestion: load → split → embed → store
+Documents are read, split into overlapping chunks, embedded with all-MiniLM-L6-v2,
+and stored in a persistent Chroma collection.
+
+![Ingestion](./screenshots/03_ingest_vector_db.png)
+
+### Step 4 — Question answering over the knowledge base
+Every required sample question is answered **from the documents**, with the
+source files and retrieval distances shown.
+
+![Q&A part 1](./screenshots/04_qa_part1.png)
+![Q&A part 2](./screenshots/05_qa_part2.png)
+
+### Step 5 — Asking a single question
+![Single question](./screenshots/06_single_question.png)
+
+### Step 6 — Guardrail: refusing information that is not in the documents
+Asking for something absent (e.g. *blood group*) returns the "unavailable"
+message rather than a hallucinated answer.
+
+![Guardrail](./screenshots/07_guardrail_refusal.png)
+
+---
+
+## Sample questions answered
+
+All of the questions required by the assignment are answered from the knowledge
+base (see screenshots above):
+
+| # | Question | Answered from |
+|---|---|---|
+| 1 | What is the student's full name? | resume, transcript |
+| 2 | What programming languages does the student know? | resume |
+| 3 | What projects has the student completed? | resume, project report |
+| 4 | Which internships has the student undertaken? | internship certificate, resume |
+| 5 | What certifications has the student earned? | certifications |
+| 6 | What technical skills are listed in the resume? | resume |
+| 7 | Which programming language was used in the final-year project? | resume, transcript |
+| 8 | What is the student's CGPA or percentage? | transcript, resume |
+| 9 | Which college or university does the student belong to? | transcript, resume |
+| 10 | What awards or achievements has the student received? | achievements |
+| 11 | What are the student's research interests? | statement of purpose |
+| 12 | What is the student's email / contact information? | resume, SOP |
+| — | What is the student's blood group? | **Not in KB → refused** |
+
+---
+
+## How the "answer only from documents" guarantee works
+
+1. **Retrieval** fetches the top-k chunks by hybrid vector + keyword search.
+2. **Grounding** — the generator is only ever shown the retrieved chunks:
+   - *LLM mode:* the system prompt forbids outside knowledge and instructs the
+     model to reply with the fixed "unavailable" sentence when the answer is
+     not in the context.
+   - *Offline mode:* the responder is purely **extractive** — it can only return
+     text that already exists in the retrieved chunks, and returns the
+     "unavailable" sentence when no question term matches any retrieved passage.
+3. **Refusal** — questions whose content isn't in any document (e.g. *blood
+   group*) therefore produce the unavailable message, never a guess.
+
+---
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `build_knowledge_base.py` | Generates the personal documents from the real resume |
+| `ingest.py` | Loads, splits, embeds and stores documents in Chroma |
+| `embeddings.py` | LangChain adapter for the all-MiniLM-L6-v2 ONNX model |
+| `llm.py` | Pluggable answer-generation backends (Ollama / Groq / Gemini / Claude) |
+| `rag.py` | Retrieval + relevance gate + answer generation |
+| `app.py` | CLI (sample set / single question / interactive) |
+| `run_with_ollama.sh` | One-command run with a free local Ollama LLM |
+| `config.py` | Chunking, retrieval and model settings |
+| `make_screenshots.py` | Renders the terminal screenshots from real runs |
+| `requirements.txt` | Dependencies |
+| `Student Knowledge Base/` | The personal documents (the dataset) |
+| `screenshots/` | Captured terminal screenshots of each step |

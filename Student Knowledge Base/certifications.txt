@@ -1,0 +1,10 @@
+CERTIFICATIONS AND COURSES — ANSON DIAS
+========================================
+
+1. Google Machine Learning Crash Course — in progress (expected Q2 2026).
+2. DeepLearning.AI Machine Learning Specialization (Coursera) — in progress
+   (expected Q2 2026). Covers supervised learning, advanced algorithms, and
+   unsupervised learning with recommender systems.
+
+Focus areas: machine learning, supervised and unsupervised learning,
+recommender systems, and applied ML with Python.
