@@ -8,3 +8,7 @@ __pycache__/
 
 # Build artifacts
 *.zip
+
+# Local environment / secrets
+.env
+.env.local
